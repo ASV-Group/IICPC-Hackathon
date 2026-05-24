@@ -8,8 +8,6 @@ import { dirname } from 'path';
 import upload from '../middleware/upload.js'; 
 import FileSanitizer from '../utils/sanitizer.js';
 import { verifyToken } from '../auth/middleware.js'; 
-
-// Import your newly created Sandbox Manager
 import DockerSandboxManager from '../services/sandbox.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,7 +17,7 @@ const router = express.Router();
 
 /**
  * POST /api/v1/submissions/submit
- * Accepts compiled binary, sanitizes it, and spins up a Docker Sandbox for testing.
+ * Accepts compiled binary, sanitizes it, and spawns container with dynamic port mapping.
  */
 router.post('/submit', verifyToken, upload.single('submission_file'), async (req, res) => {
   let tempPath;
@@ -43,30 +41,30 @@ router.post('/submit', verifyToken, upload.single('submission_file'), async (req
 
     const finalPath = path.join(__dirname, '..', 'uploads', safeName);
 
-    // 2. Save binary permanently
+    // 2. Save binary permanently inside uploads folder
     fs.renameSync(tempPath, finalPath);
 
     const teamId = req.user?.uid || 'anonymous';
-    const submissionId = Date.now().toString(); // Temporary mock submission ID
+    const submissionId = Date.now().toString(); 
 
     // 3. TRIGGER DOCKER SANDBOX (Non-blocking background run)
-    // We don't block the HTTP response. We start the container and instantly return success.
     DockerSandboxManager.runContainer(teamId, submissionId, finalPath)
       .then(async (sandboxResult) => {
         console.log(`[SYSTEM] Testing started on sandbox: ${sandboxResult.containerName}`);
+        console.log(`[SYSTEM] Live Endpoint active at: http://localhost:${sandboxResult.mappedPort}`);
         
-        // TODO: Iske baad humara Bot Fleet is containerName ke port par orders bhejega.
+        // TODO: Is endpoint par bot fleet requests fire karega metrics capture karne ke liye.
         
-        // Simulating 10 seconds benchmark run, then we cleanup the container automatically
+        // Auto-cleanup after evaluation (currently set to 20 seconds for basic tests)
         setTimeout(async () => {
           await DockerSandboxManager.stopAndCleanup(sandboxResult.containerName);
-        }, 10000); // 10 seconds of evaluation cage
+        }, 20000); 
       })
       .catch((sandboxError) => {
         console.error(`[CRITICAL ERROR] Failed to run binary inside sandbox:`, sandboxError.message);
       });
 
-    // Instant response to frontend for highly interactive UI
+    // Fast, responsive JSON payload sent to user
     return res.status(201).json({
       success: true,
       message: 'Binary successfully submitted, verified and spawned in a secure Sandbox.',
@@ -79,7 +77,6 @@ router.post('/submit', verifyToken, upload.single('submission_file'), async (req
 
   } catch (error) {
     console.error('Upload & Spawning route error:', error);
-    // Cleanup on failures
     if (tempPath && fs.existsSync(tempPath)) {
       fs.unlinkSync(tempPath);
     }
@@ -87,6 +84,7 @@ router.post('/submit', verifyToken, upload.single('submission_file'), async (req
   }
 });
 
+// Multer error handling middleware
 router.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ success: false, error: `Upload error: ${err.message}` });

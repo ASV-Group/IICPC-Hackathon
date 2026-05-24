@@ -1,60 +1,88 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import net from 'net'; // Native Node.js module to query OS for free ports
 
 /**
- * DockerSandboxManager handles the secure, sandboxed execution of contestant binaries.
- * Built using SOLID principles to isolate docker orchestration concerns.
+ * DockerSandboxManager handles container lifecycle with dynamic port allocation.
+ * Designed using SOLID principles to isolate sandbox environments.
  */
 class DockerSandboxManager {
-  // Strict Resource Limits (As per IICPC guidelines)
+  // Sandbox Configuration Limits (As per requirements)
   static MEMORY_LIMIT = '512m';
   static CPU_LIMIT = '1';
-  // static BASE_IMAGE = 'ubuntu:22.04';
-   static BASE_IMAGE = 'iicpc-sandbox-base:latest'; 
+  static BASE_IMAGE = 'iicpc-sandbox-base:latest';
+  static CONTAINER_PORT = '8080'; // The standard internal port of contestant matching engines
 
   /**
-   * Programmatically spins up a resource-constrained docker container using volume mounting.
-   * Safe from Shell Injection Attacks by using spawn instead of exec.
+   * Helper utility that queries the OS kernel for a guaranteed free TCP port.
+   * Prevents port conflicts when scaling concurrent tests.
    * 
-   * @param {string} teamName - The name of the submitting team
-   * @param {string} submissionId - A unique ID for the test run
-   * @param {string} hostBinaryPath - Path to the statically compiled Linux binary
-   * @returns {Promise<{containerName: string, containerId: string}>}
+   * @returns {Promise<number>} Ephemeral open port
+   */
+  static async getFreePort() {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.unref();
+      server.on('error', reject);
+      server.listen(0, () => {
+        const { port } = server.address();
+        server.close(() => {
+          resolve(port);
+        });
+      });
+    });
+  }
+
+  /**
+   * Spins up sandbox with dynamic port mapping (hostPort -> containerPort).
+   * Uses spawn instead of exec to guarantee shell injection prevention.
+   * 
+   * @param {string} teamName - Name of the contestant team
+   * @param {string} submissionId - Unique ID of the submission
+   * @param {string} hostBinaryPath - Absolute path of the executable on the host
+   * @returns {Promise<{containerName: string, containerId: string, mappedPort: number}>}
    */
   static async runContainer(teamName, submissionId, hostBinaryPath) {
-    // 1. Sanitize the team name to create a safe, unique container ID
     const cleanTeamName = teamName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     const containerName = `sandbox-${cleanTeamName}-${submissionId}`;
 
-    // 2. Strict Check: Verify that the binary actually exists
     if (!fs.existsSync(hostBinaryPath)) {
       throw new Error(`Execution error: Binary not found at path: ${hostBinaryPath}`);
     }
 
-    // 3. Security Check: Apply executable permissions (+x / 0755) on the host file
     try {
+      // Apply execution bit to make the binary executable on Linux
       fs.chmodSync(hostBinaryPath, 0o755); 
     } catch (chmodError) {
-      console.warn(`[SANDBOX WARNING] Failed to set +x permission on host file. Running container might fail:`, chmodError);
+      console.warn(`[SANDBOX WARNING] Failed to set +x permission on host file:`, chmodError.message);
     }
 
-    // 4. Prepare Docker arguments as an array to guarantee parameter safety
+    // 1. DYNAMICALLY ALLOCATE FREE PORT ON THE HOST
+    let hostPort;
+    try {
+      hostPort = await this.getFreePort();
+      console.log(`[SANDBOX] Ephemeral port allocated: ${hostPort} -> mapped to internal container port: ${this.CONTAINER_PORT}`);
+    } catch (portError) {
+      throw new Error(`Port allocation failed: ${portError.message}`);
+    }
+
+    // 2. Prepare Docker arguments with Port Forwarding parameter
     const args = [
       'run',
-      '-d', // Background execution
+      '-d',
       '--name', containerName,
       '--memory', this.MEMORY_LIMIT,
       '--cpus', this.CPU_LIMIT,
-      '-v', `${path.resolve(hostBinaryPath)}:/app/my_engine`, // Injected volume
+      '-p', `${hostPort}:${this.CONTAINER_PORT}`, // Forwarding: Host -> Container
+      '-v', `${path.resolve(hostBinaryPath)}:/app/my_engine`,
       this.BASE_IMAGE,
-      '/app/my_engine' // Execute instantly
+      '/app/my_engine'
     ];
 
     return new Promise((resolve, reject) => {
-      console.log(`[SANDBOX] Initializing isolated run: ${containerName}`);
+      console.log(`[SANDBOX] Initializing run: ${containerName} (Port: ${hostPort})`);
       
-      // Spawning the docker process securely
       const dockerProcess = spawn('docker', args);
       let stdout = '';
       let stderr = '';
@@ -70,8 +98,8 @@ class DockerSandboxManager {
       dockerProcess.on('close', (code) => {
         if (code === 0) {
           const containerId = stdout.trim();
-          console.log(`[SANDBOX] Container started. Container ID: ${containerId}`);
-          resolve({ containerName, containerId });
+          console.log(`[SANDBOX] Container spawned. ID: ${containerId}`);
+          resolve({ containerName, containerId, mappedPort: hostPort });
         } else {
           console.error(`[SANDBOX] Process failed. Code: ${code}. Error: ${stderr}`);
           reject(new Error(`Sandbox startup error: ${stderr.trim()}`));
@@ -81,22 +109,21 @@ class DockerSandboxManager {
   }
 
   /**
-   * Cleanly destroys and deletes the container to free RAM & CPU cores.
+   * Forcefully kills and removes the container from Docker environment.
+   * 
    * @param {string} containerName 
+   * @returns {Promise<boolean>}
    */
   static async stopAndCleanup(containerName) {
     return new Promise((resolve) => {
-      console.log(`[SANDBOX] Destroying resource limits cage: ${containerName}`);
-      
-      // Forcefully remove the container (-f stops and removes at the same time)
+      console.log(`[SANDBOX] Destroying container: ${containerName}`);
       const dockerProcess = spawn('docker', ['rm', '-f', containerName]);
-      
       dockerProcess.on('close', (code) => {
         if (code === 0) {
           console.log(`[SANDBOX] Cleanup complete for: ${containerName}`);
           resolve(true);
         } else {
-          console.warn(`[SANDBOX] Failed to completely remove container: ${containerName}. May require manual docker cleanup.`);
+          console.warn(`[SANDBOX] Failed to completely remove container: ${containerName}`);
           resolve(false);
         }
       });
