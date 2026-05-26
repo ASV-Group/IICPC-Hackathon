@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase'; 
 import AuthPage from './components/AuthPage';
 import UploadPage from './components/UploadPage';
-import DashboardPage from './components/DashboardPage'; // New Component
+import DashboardPage from './components/DashboardPage';
 import './App.css';
 
 function App() {
@@ -11,25 +11,26 @@ function App() {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   
-  // Navigation State Management: 'AUTH' | 'UPLOAD' | 'DASHBOARD'
-  const [currentView, setCurrentView] = useState('AUTH');
-  const [activeTest, setActiveTest] = useState(null); // Holds running test metadata
+  // Navigation State Management: 'LANDING' | 'AUTH' | 'UPLOAD' | 'DASHBOARD'
+  const [currentView, setCurrentView] = useState('LANDING');
+  const [activeTest, setActiveTest] = useState(null); 
 
   useEffect(() => {
+    // Listen to Firebase Auth State changes
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
         try {
           const idToken = await currentUser.getIdToken();
           setToken(idToken);
-          setCurrentView('UPLOAD'); // Redirect to upload once authenticated
+          setCurrentView('UPLOAD'); // If already logged in, redirect directly to Upload [2]
         } catch (error) {
           console.error("Error fetching token:", error);
         }
       } else {
         setUser(null);
         setToken(null);
-        setCurrentView('AUTH');
+        setCurrentView('LANDING'); // Show Hero landing page by default
       }
       setLoading(false);
     });
@@ -37,17 +38,26 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Triggered when contestant submits code successfully
   const handleUploadSuccess = (payload) => {
-    setActiveTest(payload); // Contains filename, teamId, etc.
-    setCurrentView('DASHBOARD'); // Instant redirection to Live Dashboard Page
+    setActiveTest(payload); 
+    setCurrentView('DASHBOARD'); 
   };
 
   const handleLogout = async () => {
     try {
       await signOut(auth);
+      setCurrentView('LANDING');
     } catch (error) {
       console.error("Logout error:", error);
+    }
+  };
+
+  // Triggered when clicking CTA buttons on Landing Hero section
+  const handleStartTestingClick = () => {
+    if (user) {
+      setCurrentView('UPLOAD'); // Redirect to Upload directly [2]
+    } else {
+      setCurrentView('AUTH'); // Prompt Login first [2]
     }
   };
 
@@ -62,25 +72,79 @@ function App() {
 
   return (
     <div className="app-container">
-      {user && (
-        <nav className="main-navbar">
-          <div className="brand-title" onClick={() => setCurrentView('UPLOAD')} style={{cursor: 'pointer'}}>
-            IICPC Benchmark 2026
-          </div>
-          <div className="nav-profile">
-            <span className="user-email">{user.email}</span>
-            <button onClick={handleLogout} className="signout-button">Sign Out</button>
-          </div>
-        </nav>
-      )}
+      {/* Dynamic Navbar */}
+      <nav className="main-navbar">
+        <div className="brand-title" onClick={() => user ? setCurrentView('UPLOAD') : setCurrentView('LANDING')} style={{cursor: 'pointer'}}>
+          IICPC Benchmark 2026
+        </div>
+        <div className="nav-profile">
+          {user ? (
+            <>
+              <span className="user-email">{user.email}</span>
+              <button onClick={handleLogout} className="signout-button">Sign Out</button>
+            </>
+          ) : (
+            currentView !== 'AUTH' && (
+              <button onClick={() => setCurrentView('AUTH')} className="login-nav-btn">
+                Sign In
+              </button>
+            )
+          )}
+        </div>
+      </nav>
 
       <main className="content-area">
+        {/* LANDING / HERO SECTION VIEW */}
+        {currentView === 'LANDING' && (
+          <div className="hero-section">
+            <div className="hero-content">
+              <span className="badge-new">IICPC SUMMER HACKATHON 2026</span>
+              <h1 className="hero-title">
+                Distributed Benchmarking & <br />
+                <span className="gradient-text">Hosting Platform</span>
+              </h1>
+              <p className="hero-subtitle">
+                Evaluate contestant-submitted trading infrastructure under extreme market volatility. 
+                Secure sandboxing, dynamic load generation, and live telemetry ingestion [1].
+              </p>
+              
+              <div className="hero-cta-buttons">
+                <button onClick={handleStartTestingClick} className="cta-primary">
+                  Run Stress Test Suite
+                </button>
+                <button onClick={() => window.open('https://github.com', '_blank')} className="cta-secondary">
+                  Documentation
+                </button>
+              </div>
+            </div>
+
+            {/* Feature Highlights Grid */}
+            <div className="features-grid">
+              <div className="feature-card">
+                <div className="feature-icon">🛡️</div>
+                <h3>Secure Sandboxing</h3>
+                <p>Strict CPU pinning and memory limits inside hardened isolation containers [1].</p>
+              </div>
+              <div className="feature-card">
+                <div className="feature-icon">🚀</div>
+                <h3>Distributed Bot Fleet</h3>
+                <p>Simulate volatile market movements with high-velocity concurrent orders [1].</p>
+              </div>
+              <div className="feature-card">
+                <div className="feature-icon">📊</div>
+                <h3>Live Telemetry</h3>
+                <p>Track throughput limits, correctness priority, and latency metrics in real-time [1].</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {currentView === 'AUTH' && <AuthPage />}
         
         {currentView === 'UPLOAD' && (
           <UploadPage 
             userToken={token} 
-            onUploadSuccess={handleUploadSuccess} // Callback to transition state
+            onUploadSuccess={handleUploadSuccess} 
           />
         )}
         
@@ -88,7 +152,7 @@ function App() {
           <DashboardPage 
             activeTest={activeTest} 
             userToken={token}
-            onBackToUpload={() => setCurrentView('UPLOAD')} // Allows to re-test
+            onBackToUpload={() => setCurrentView('UPLOAD')} 
           />
         )}
       </main>
