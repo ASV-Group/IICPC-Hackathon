@@ -4,6 +4,9 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import {client} from "../index.js"
+import {redisClient} from "../server.js"
+import { tsClient } from '../server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -60,7 +63,7 @@ class SubmissionQueueManager {
       });
 
       // Step B: Trigger Bot Fleet and pipe live performance updates to Event Bus
-      await this.triggerBotFleetAndStream(sandboxResult.mappedPort, submissionId, 100, 10);
+      await this.triggerBotFleetAndStream(sandboxResult.mappedPort, submissionId);
 
     } catch (error) {
       console.error(`[QUEUE ERROR] Benchmark failed:`, error.message);
@@ -91,113 +94,185 @@ class SubmissionQueueManager {
   /**
    * Spawns Bot process and simulates/pipes telemetry data to SSE clients in real-time [2].
    */
-  async triggerBotFleetAndStream(port, submissionId, concurrency, duration) {
-    return new Promise((resolve) => {
-      console.log(`[BOT FLEET] Spawning Go load generator on port: ${port}...`);
+  // async triggerBotFleetAndStream(port, submissionId, concurrency, duration) {
+  //   return new Promise((resolve) => {
+  //     console.log(`[BOT FLEET] Spawning Go load generator on port: ${port}...`);
 
-      const botScriptPath = path.join(__dirname, '..', 'bot_fleet.go'); 
-      const botProcess = spawn('go', [
-        'run', 
-        botScriptPath, 
-        '-port', port.toString(), 
-        '-c', concurrency.toString(), 
-        '-d', duration.toString()
-      ]);
+  //     const botScriptPath = path.join(__dirname, '..', 'bot_fleet.go'); 
+  //     const botProcess = spawn('go', [
+  //       'run', 
+  //       botScriptPath, 
+  //       '-port', port.toString(), 
+  //       '-c', concurrency.toString(), 
+  //       '-d', duration.toString()
+  //     ]);
 
-      let progress = 10;
-      let errorOccurred = false;
+  //     let progress = 10;
+  //     let errorOccurred = false;
 
-      // Realtime simulator interval (Pipes metrics to Event Bus every 500ms) [2]
-      const telemetryInterval = setInterval(() => {
-        if (progress >= 100 || errorOccurred) {
-          clearInterval(telemetryInterval);
-          return;
-        }
+  //     // Realtime simulator interval (Pipes metrics to Event Bus every 500ms) [2]
+  //     const telemetryInterval = setInterval(() => {
+  //       if (progress >= 100 || errorOccurred) {
+  //         clearInterval(telemetryInterval);
+  //         return;
+  //       }
 
-        progress += 5; // progress 5% increase
+  //       progress += 5; // progress 5% increase
 
-        // Generate high-frequency simulated live stats [1]
-        const liveTps = Math.floor(Math.random() * (45000 - 32000) + 32000);
-        const liveP50 = parseFloat((Math.random() * (1.4 - 0.7) + 0.7).toFixed(2));
-        const liveP99 = parseFloat((Math.random() * (4.5 - 2.8) + 2.8).toFixed(2));
+  //       // Generate high-frequency simulated live stats [1]
+  //       const liveTps = Math.floor(Math.random() * (45000 - 32000) + 32000);
+  //       const liveP50 = parseFloat((Math.random() * (1.4 - 0.7) + 0.7).toFixed(2));
+  //       const liveP99 = parseFloat((Math.random() * (4.5 - 2.8) + 2.8).toFixed(2));
 
-        const payload = {
-          progress: progress,
-          completed: false,
-          metrics: { tps: liveTps, p50: liveP50, p90: liveP50 * 1.8, p99: liveP99 }
-        };
+  //       const payload = {
+  //         progress: progress,
+  //         completed: false,
+  //         metrics: { tps: liveTps, p50: liveP50, p90: liveP50 * 1.8, p99: liveP99 }
+  //       };
 
-        // Contextual stage logs
-        if (progress === 25) payload.log = "[BOT FLEET] Spawning concurrent goroutine workers...";
-        if (progress === 55) payload.log = "[VALIDATOR] Orderbook price-time priority verified.";
-        if (progress === 80) payload.log = "[BOT FLEET] Injecting volatile market burst load: 45k orders/sec!";
+  //       // Contextual stage logs
+  //       if (progress === 25) payload.log = "[BOT FLEET] Spawning concurrent goroutine workers...";
+  //       if (progress === 55) payload.log = "[VALIDATOR] Orderbook price-time priority verified.";
+  //       if (progress === 80) payload.log = "[BOT FLEET] Injecting volatile market burst load: 45k orders/sec!";
 
-        // Emit real-time metrics payload to Event Bus [2]
-        eventBus.emit(`stream:${submissionId}`, payload);
-      }, 500);
+  //       // Emit real-time metrics payload to Event Bus [2]
+  //       eventBus.emit(`stream:${submissionId}`, payload);
+  //     }, 500);
 
-      botProcess.on('error', (err) => {
-        errorOccurred = true;
-        clearInterval(telemetryInterval);
-        console.warn(`[BOT FLEET WARNING] Go execution error fallback triggered:`, err.message);
+  //     botProcess.on('error', (err) => {
+  //       errorOccurred = true;
+  //       clearInterval(telemetryInterval);
+  //       console.warn(`[BOT FLEET WARNING] Go execution error fallback triggered:`, err.message);
         
-        // Simulating progress if Go is not installed on testing host
-        let fallbackProgress = 10;
-        const fallbackInterval = setInterval(() => {
-          fallbackProgress += 10;
+  //       // Simulating progress if Go is not installed on testing host
+  //       let fallbackProgress = 10;
+  //       const fallbackInterval = setInterval(() => {
+  //         fallbackProgress += 10;
           
-          const payload = {
-            progress: fallbackProgress,
-            completed: fallbackProgress >= 100,
-            metrics: {
-              tps: Math.floor(Math.random() * (42000 - 30000) + 30000),
-              p50: parseFloat((Math.random() * (1.5 - 0.8) + 0.8).toFixed(2)),
-              p99: parseFloat((Math.random() * (4.8 - 3.2) + 3.2).toFixed(2))
+  //         const payload = {
+  //           progress: fallbackProgress,
+  //           completed: fallbackProgress >= 100,
+  //           metrics: {
+  //             tps: Math.floor(Math.random() * (42000 - 30000) + 30000),
+  //             p50: parseFloat((Math.random() * (1.5 - 0.8) + 0.8).toFixed(2)),
+  //             p99: parseFloat((Math.random() * (4.8 - 3.2) + 3.2).toFixed(2))
+  //           }
+  //         };
+
+  //         if (fallbackProgress === 30) payload.log = "[BOT FLEET] Simulating Go Load Generator in background...";
+  //         if (fallbackProgress === 70) payload.log = "[VALIDATOR] Validating price matching metrics...";
+
+  //         if (fallbackProgress >= 100) {
+  //           clearInterval(fallbackInterval);
+  //           payload.report = {
+  //             peakTps: 45320,
+  //             avgLatencyP50: "1.12 ms",
+  //             avgLatencyP99: "3.45 ms",
+  //             correctnessScore: "99.98%",
+  //             stability: "HEALTHY (No Crashes)",
+  //             compositeScore: 942
+  //           };
+  //           eventBus.emit(`stream:${submissionId}`, payload);
+  //           resolve("MOCK_SUCCESS");
+  //         } else {
+  //           eventBus.emit(`stream:${submissionId}`, payload);
+  //         }
+  //       }, 1000);
+  //     });
+
+  //     botProcess.on('close', (code) => {
+  //       if (errorOccurred) return;
+  //       clearInterval(telemetryInterval);
+
+  //       // Final Report construction once real bot concludes [1, 2]
+  //       const finalPayload = {
+  //         progress: 100,
+  //         completed: true,
+  //         log: "[SYSTEM] Evaluation complete. Containers safely dismantled. [OK]",
+  //         report: {
+  //           peakTps: 45320,
+  //           avgLatencyP50: "1.12 ms",
+  //           avgLatencyP99: "3.45 ms",
+  //           correctnessScore: "99.98%",
+  //           stability: "HEALTHY (No Crashes)",
+  //           compositeScore: 942
+  //         }
+  //       };
+
+  //       eventBus.emit(`stream:${submissionId}`, finalPayload);
+  //       resolve("SUCCESS");
+  //     });
+  //   });
+  // }
+  async triggerBotFleetandStream(port, submissionId){
+    return new Promise((resolve,reject)=>{
+      console.log(`calling StartLoad() of the go grpc server at the port ${port}`);
+      client.StartLoad({URL:"ws://localhost:8080/trade"},(err,response)=>{
+        if(err!==null){
+          console.log("failed to start load due to the error ",err);
+          return reject(err);
+        }
+        console.log(`successfully start the load. ${response.Message}`);
+        let secondPassed=0;
+        const telemetryInterval= setInterval(async ()=>{
+          secondPassed++;
+          try{
+            const multi=redisClient.multi();
+            multi.lRange("telemetry_queue",0,-1);
+            multi.del("telemetry_queue");
+            const redisResult=await multi.exec();
+            const rawData=redisResult[0][1];
+            let totalRequestSend=rawData.length;
+            let successfulRequests=0;
+            let latencies=[];
+            for(let data of rawData){
+              const parts=data.split(",");
+              const latency=parts[0];
+              const success=parts[1];
+              if(success==1){
+                successfulRequests++;
+                latencies.push(latency);
+              }
             }
-          };
-
-          if (fallbackProgress === 30) payload.log = "[BOT FLEET] Simulating Go Load Generator in background...";
-          if (fallbackProgress === 70) payload.log = "[VALIDATOR] Validating price matching metrics...";
-
-          if (fallbackProgress >= 100) {
-            clearInterval(fallbackInterval);
-            payload.report = {
-              peakTps: 45320,
-              avgLatencyP50: "1.12 ms",
-              avgLatencyP99: "3.45 ms",
-              correctnessScore: "99.98%",
-              stability: "HEALTHY (No Crashes)",
-              compositeScore: 942
-            };
-            eventBus.emit(`stream:${submissionId}`, payload);
-            resolve("MOCK_SUCCESS");
-          } else {
-            eventBus.emit(`stream:${submissionId}`, payload);
+            const throughput=successfulRequests;
+            const accuracy=totalRequestSend>0?parseFloat(((throughput/totalRequestSend)*100).toFixed(2)):0;
+            latencies.sort((a,b)=>a-b);
+            const p50_lat=latencies.length>0?latencies[Math.floor(latencies.length*0.50)]:0;
+            const p99_lat=latencies.length>0?latencies[Math.floor(latencies.length*0.99)]:0;
+            console.log(`tps:${throughput},p50 latency ${p50_lat} p99 latency ${p99_lat} and accuracy ${accuracy}`);
+            eventBus.emit(`stream:${submissionId}`,{
+              progress: Math.min(secondPassed*2,99),
+              completed:false,
+              metrics:{tps:throughput,p50:p50_lat,p99: p99_lat,accuracy:accuracy},
+              log:`[Telemetry] Load ${throughput} tps. p99 Latency ${p99_lat}ms`
+            });
+            const currentTime=new Date();
+            await tsClient.query(`insert into metrics_trading_engine (submission_id,recorded_at,time_second,tps,p50,p99,accuracy) values($1,$2,$3,$4,$5,$6,$7)`,[submissionId,currentTime,secondPassed,throughput,
+              p50_lat,p99_lat,accuracy
+            ]);
+             if(secondPassed>5&&throughput==0){
+              console.log("[Engine Crashed] Throughput died to 0! Engine died!");
+              clearInterval(telemetryInterval);
+              client.StopLoad({Message:"Stop the test"},(err,response)=>{
+                console.log(`we stop the test ${response.Message}`);
+                eventBus.emit(`stream:${submissionId}`,{
+                  progress:100,
+                  completed:true,
+                  log:"[System] engine crashed under the increasing load",
+                  report:{
+                    peakTps:"check the final report",
+                    avgLatencyP50:"check the final report",
+                    avgLatencyP99:"check the final report",
+                    stability:"crashed"
+                  }
+                });
+                resolve("Test_Completed");
+              });
+            }
+          }catch(redisErr){
+            console.log("some error occured while fetching data from redis ",redisErr);
           }
-        }, 1000);
-      });
-
-      botProcess.on('close', (code) => {
-        if (errorOccurred) return;
-        clearInterval(telemetryInterval);
-
-        // Final Report construction once real bot concludes [1, 2]
-        const finalPayload = {
-          progress: 100,
-          completed: true,
-          log: "[SYSTEM] Evaluation complete. Containers safely dismantled. [OK]",
-          report: {
-            peakTps: 45320,
-            avgLatencyP50: "1.12 ms",
-            avgLatencyP99: "3.45 ms",
-            correctnessScore: "99.98%",
-            stability: "HEALTHY (No Crashes)",
-            compositeScore: 942
-          }
-        };
-
-        eventBus.emit(`stream:${submissionId}`, finalPayload);
-        resolve("SUCCESS");
+        },1000)
       });
     });
   }
