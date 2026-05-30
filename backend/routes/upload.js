@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { tsClient } from '../server.js';
 
 // Core Middlewares & Utilities
 import upload from '../middleware/upload.js'; 
@@ -64,6 +65,8 @@ router.post('/submit', verifyToken, upload.single('submission_file'), async (req
       submissionId: submissionId,
       binaryPath: finalPath
     });
+
+    await tsClient.query(`insert into submissions (team_id,submission_id) values($1,$2)`,[teamId,submissionId]);
 
     // Fast, responsive payload returned to the frontend
     return res.status(201).json({
