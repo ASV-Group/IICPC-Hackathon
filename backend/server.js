@@ -4,6 +4,9 @@ import cors from "cors";
 import helmet from "helmet";
 import { initializeApp, cert } from "firebase-admin/app";
 import { readFileSync, existsSync } from "fs";
+import {createClient} from "redis"
+import {Client as PostgresClient} from "pg";
+import metricsRouter from "./routes/metrics.js";
 
 // Routes Imports
 import authRoutes from "./auth/routes.js";
@@ -14,7 +17,17 @@ import streamRoutes from "./routes/stream.js"; // SSE routes for telemetry strea
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 let initialized = false;
 
-try {
+export const redisClient=createClient({url:"redis://localhost:6379"});
+export const tsClient=new PostgresClient({connectionString:"postgresql://postgres:password@localhost:5432/iicpc_hackathon"});
+
+
+try{
+  await redisClient.connect();
+  console.log("connected with redisdb server running at port 6379");
+  await tsClient.connect();
+  console.log("connected with timescaledb server running at port 5432");
+
+  try {
   if (serviceAccountPath && existsSync(serviceAccountPath)) {
     const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, "utf-8"));
     initializeApp({ credential: cert(serviceAccount) });
@@ -88,7 +101,13 @@ app.get("/", (_req, res) => {
   });
 });
 
+app.use("/api",metricsRouter)
+
 // 3. LISTEN TO PORT
 app.listen(PORT, () => {
   console.log(`✓ Server running on http://localhost:${PORT}`);
 });
+
+}catch(err){
+  console.log("not connected with database due to the error ",err)
+}
